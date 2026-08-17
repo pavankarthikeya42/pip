@@ -1,0 +1,1 @@
+from .pymupdf_fallback import extract_with_pymupdf

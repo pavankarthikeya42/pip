@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite3
+validation.db
+
+# Chrome & Playwright profiles
+.playwright_profile/
+data/.chrome_profile/
+
+# Data outputs & downloads
+data/pdf/*.pdf
+data/extracted/*.json
+data/results/*.json
+
+# IDE
+.vscode/
+.idea/
+.agents/
