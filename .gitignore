@@ -28,6 +28,7 @@ data/.chrome_profile/
 data/pdf/*.pdf
 data/extracted/*.json
 data/results/*.json
+results/
 
 # IDE
 .vscode/

@@ -18,7 +18,33 @@ async def expand_all_sections(page):
             await row.click()
             await page.wait_for_timeout(150)
 
+async def click_expand_collapse_3_times(page):
+    """Click the Expand All / Collapse All button on the comparison table 3 times."""
+    toggle_selector = (
+        "button.cmp-btn:has-text('Collapse All'), button.cmp-btn:has-text('Expand All'), "
+        "button:has-text('Collapse All'), button:has-text('Expand All')"
+    )
+    print("[KARI] Clicking Expand All / Collapse All button 3 times...")
+    for i in range(1, 4):
+        btn = page.locator(toggle_selector).first
+        if await btn.count() > 0 and await btn.is_visible():
+            txt = (await btn.inner_text()).replace("\n", " ").strip()
+            print(f"[KARI] Click {i}/3 on button: '{txt}'")
+            await btn.click()
+            await page.wait_for_timeout(400)
+        else:
+            print(f"[KARI] Toggle button not visible on attempt {i}/3")
+
+    # If the button currently shows 'Expand All', click once more so all sections are expanded for data extraction.
+    expand_btn = page.locator("button.cmp-btn:has-text('Expand All'), button:has-text('Expand All')").first
+    if await expand_btn.count() > 0 and await expand_btn.is_visible():
+        txt = (await expand_btn.inner_text()).replace("\n", " ").strip()
+        print(f"[KARI] Ensuring sections are expanded for extraction: clicking '{txt}'")
+        await expand_btn.click()
+        await page.wait_for_timeout(400)
+
 async def extract_comparison(page) -> dict:
+    await click_expand_collapse_3_times(page)
     await expand_all_sections(page)
     result = {"metadata": {}, "sections": [], "tables": []}
     # Metadata is extracted from the comparison table generically.

@@ -6,7 +6,7 @@ RECAPTCHA = 'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha'
 
 DEMO_TRIGGER = 'input.cb-demo-inp, .cb-demo-inp, button.cb-cta, button.w-cta'
 ASK_KARI_BUTTON = 'button.cb-cta, button.w-cta, input.cb-demo-inp'
-CHAT_INPUT = 'textarea.ta, textarea:not([readonly])'
+CHAT_INPUT = 'textarea.ta, textarea:not([readonly]), input[placeholder*="Ask" i], [contenteditable="true"]'
 CHAT_SEND = 'button.snd, button[aria-label*="send" i]'
 
 # Source chips/filters on the live chatbot page.
@@ -17,6 +17,7 @@ SEARCH_INPUT = 'textarea.ta, textarea[placeholder*="Ask" i], input[placeholder*=
 RESULT_ROW = '.dl-row'
 ROW_CHECKBOX = 'label.dl-checkbox-label, input[type="checkbox"]'
 PDF_BUTTON = 'button.dl-pdf-btn, .dl-pdf-btn, button[title*="PIP PDF" i]'
+COMPARISON_PDF_BUTTON = 'button.cmp-th-pdf, .cmp-th-pdf, button:has(img[src*="pdf_file_icon"])'
 COMPARE_BUTTON = 'button.dl-compare-btn, .dl-compare-btn, button:has-text("Compare")'
 COMPARISON_ROOT = '.cmp-table, .cmp-section-group, [data-section-key], .comparison-container'
 SECTION_GROUP = 'tbody.cmp-section-group'

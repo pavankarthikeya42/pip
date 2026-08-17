@@ -4,7 +4,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 from .selectors import (
     LOGIN_EMAIL, LOGIN_PASSWORD, LOGIN_SUBMIT, RECAPTCHA,
     ASK_KARI_BUTTON, CHAT_INPUT, CHAT_SEND, SOURCE_NAME, DEMO_TRIGGER,
-    SEARCH_INPUT, RESULT_ROW, PDF_BUTTON, COMPARE_BUTTON, COMPARISON_ROOT,
+    SEARCH_INPUT, RESULT_ROW, PDF_BUTTON, COMPARISON_PDF_BUTTON, COMPARE_BUTTON, COMPARISON_ROOT,
 )
 from .captcha import captcha_present, wait_for_human_captcha
 from ..config import settings, PDF_DIR, ROOT
@@ -424,6 +424,53 @@ class KARIClient:
         if path.exists() and path.stat().st_size > 0:
             return path
         raise RuntimeError(f"Failed to retrieve PDF for PIP {pip_number}")
+
+    async def retrieve_pdf_from_comparison(self, pip_number):
+        """Download the PIP PDF directly from the comparison table header button (.cmp-th-pdf)."""
+        page = self.page
+        btn = page.locator(COMPARISON_PDF_BUTTON).first
+        if await btn.count() == 0:
+            print("[KARI] Comparison table PDF button not found; falling back to standard PDF button...")
+            btn = page.locator(PDF_BUTTON).first
+        if await btn.count() == 0:
+            raise RuntimeError(f"PIP PDF button not found on comparison table for PIP {pip_number}")
+
+        path = PDF_DIR / f"{pip_number or 'pip_document'}.pdf"
+        print("[KARI] Clicking PDF button in comparison table header...")
+
+        try:
+            async with page.expect_popup(timeout=12000) as popup_info:
+                await btn.click()
+            popup = await popup_info.value
+            await popup.wait_for_load_state("domcontentloaded")
+            pdf_url = popup.url
+            print(f"[KARI] Comparison PDF opened in tab: {pdf_url}")
+
+            try:
+                resp = await page.request.get(pdf_url)
+                if resp.status == 200:
+                    body = await resp.body()
+                    if body:
+                        path.write_bytes(body)
+                        print(f"[KARI] Saved comparison PDF from URL ({len(body)} bytes) -> {path}")
+                        await popup.close()
+                        return path
+            except Exception as e:
+                print(f"[KARI] Direct comparison PDF fetch note: {e}")
+
+            await popup.close()
+        except PlaywrightTimeoutError:
+            print("[KARI] No popup detected for comparison PDF; trying download fallback...")
+            async with page.expect_download(timeout=15000) as dl_info:
+                await btn.click()
+            dl = await dl_info.value
+            await dl.save_as(path)
+            print(f"[KARI] Downloaded comparison PDF -> {path}")
+            return path
+
+        if path.exists() and path.stat().st_size > 0:
+            return path
+        raise RuntimeError(f"Failed to retrieve comparison PDF for PIP {pip_number}")
 
     async def compare(self, row=None):
         page = self.page
