@@ -1,6 +1,51 @@
 from .normalizer import norm, norm_id
+import re
 
 ID_FIELDS = {"pip_number", "decision_number"}
+
+
+def _compare_section_content(pdf_txt: str, ui_txt: str) -> bool:
+    """Compare section content with tolerance for UI noise (e.g. injected page headers).
+
+    Strategy:
+    1. If either text is empty, treat as match (no content to compare).
+    2. Simple substring check (fast path).
+    3. Chunk-based: split PDF text into meaningful segments and verify each
+       segment exists somewhere in the UI text. This handles cases where
+       the UI injects page headers/footers in the middle of section content.
+    """
+    if not pdf_txt or not ui_txt:
+        return True
+
+    norm_pdf = norm(pdf_txt)
+    norm_ui = norm(ui_txt)
+
+    # Fast path: simple containment
+    if norm_pdf in norm_ui or norm_ui in norm_pdf:
+        return True
+
+    # Chunk-based comparison: split PDF content by tab-separated entries
+    # (for table-like sections) or by sentences, and check each chunk exists in UI.
+    # Split on tab or newline boundaries to get meaningful content chunks.
+    chunks = re.split(r'[\t\n]+', pdf_txt)
+    chunks = [c.strip() for c in chunks if c.strip()]
+
+    if not chunks:
+        return True
+
+    matched_chunks = 0
+    for chunk in chunks:
+        norm_chunk = norm(chunk)
+        # Skip very short chunks (headers like "Area", "Description")
+        if len(norm_chunk) < 4:
+            matched_chunks += 1
+            continue
+        if norm_chunk in norm_ui:
+            matched_chunks += 1
+
+    # Consider it a match if at least 80% of meaningful chunks are found in the UI
+    ratio = matched_chunks / len(chunks) if chunks else 1.0
+    return ratio >= 0.8
 
 KEY_ALIASES = {
     "generic": "generic_name",
@@ -102,7 +147,7 @@ def compare_ui_vs_pdf(ui: dict, pdf: dict) -> dict:
             pdf_txt = pdf_sec.get("text", "")
             ui_txt = ui_sec.get("text", "")
             
-            content_match = (norm(pdf_txt) in norm(ui_txt) or norm(ui_txt) in norm(pdf_txt)) if (pdf_txt and ui_txt) else True
+            content_match = _compare_section_content(pdf_txt, ui_txt)
             matched_sections.append({
                 "label": pdf_sec.get("label") or pdf_sec.get("key"),
                 "pdf_text": pdf_txt,

@@ -1,11 +1,8 @@
 import json
-from pathlib import Path
-from ..config import ROOT, RESULTS_DIR
+from ..config import RESULTS_DIR
 
 def generate_reports(result: dict, pip_number: str):
     """Generate human-readable Markdown and formatted JSON reports in the results directory."""
-    top_results_dir = ROOT / "results"
-    top_results_dir.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     ui_pdf = result.get("ui_vs_pdf_validation", {})
@@ -100,7 +97,6 @@ def generate_reports(result: dict, pip_number: str):
 
     md_content = "\n".join(md_lines)
 
-    for folder in (RESULTS_DIR, top_results_dir):
-        (folder / f"{pip_number}_report.md").write_text(md_content, encoding="utf-8")
-        (folder / f"{pip_number}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"[REPORTS] Saved validation report -> {folder / f'{pip_number}_report.md'}")
+    (RESULTS_DIR / f"{pip_number}_report.md").write_text(md_content, encoding="utf-8")
+    (RESULTS_DIR / f"{pip_number}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[REPORTS] Saved validation report -> {RESULTS_DIR / f'{pip_number}_report.md'}")
