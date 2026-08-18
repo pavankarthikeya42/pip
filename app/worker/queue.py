@@ -123,3 +123,48 @@ def load_jobs_from_excel(
     db.upsert_medicines(rows)
     db.create_jobs(owner=owner)
     return len(rows)
+
+
+def stream_jobs_from_excel(
+    path: str | Path,
+    limit: int | None = None,
+    medicine: str | None = None,
+) -> list[dict[str, Any]]:
+    """Stream PIP job records directly from Excel without using a database."""
+    import openpyxl
+
+    path = Path(path)
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=False)
+    ws = wb.active
+    header_row, header_cols = detect_header_row(ws)
+
+    rows: list[dict[str, Any]] = []
+    medicine_filter = medicine.casefold().strip() if medicine else None
+
+    for row_idx in range(header_row + 1, ws.max_row + 1):
+        metadata: dict[str, str] = {}
+        for field, col_idx in header_cols.items():
+            metadata[field] = _stringify(ws.cell(row_idx, col_idx).value)
+
+        medicine_name = metadata.get("brand_name", "").strip()
+        if not medicine_name:
+            continue
+        if medicine_filter and medicine_name.casefold() != medicine_filter:
+            continue
+
+        metadata["medicine_name"] = medicine_name
+        metadata["source_file"] = path.name
+        metadata["source_row"] = str(row_idx)
+        rows.append(metadata)
+
+        if limit is not None and len(rows) >= limit:
+            break
+
+    if not rows:
+        raise ValueError(
+            f"No medicine records found in {path.name}"
+            + (f" for medicine '{medicine}'" if medicine else "")
+        )
+
+    return rows
+

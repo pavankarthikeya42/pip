@@ -8,11 +8,24 @@ from .config import settings
 def main():
     p = argparse.ArgumentParser(description="PDF ↔ KARI validation tool")
     p.add_argument('--import-excel', help='Path to the PIP Excel export')
+    p.add_argument('--stream-excel', help='Path to PIP Excel export for Direct DB-less Stream validation')
     p.add_argument('--owner', default=settings.owner, help='Owner/user name')
     p.add_argument('--medicine', help='Import/test only one medicine by Brand Name')
     p.add_argument('--limit', type=int, help='Import at most N medicine rows')
+    p.add_argument('--no-skip', action='store_true', help='Do not skip already completed drugs in stream mode')
     p.add_argument('--run', action='store_true', help='Run the validation worker')
     args = p.parse_args()
+
+    if args.stream_excel:
+        asyncio.run(
+            Runner().run_stream(
+                excel_path=args.stream_excel,
+                limit=args.limit,
+                medicine=args.medicine,
+                skip_existing=not args.no_skip,
+            )
+        )
+        return
 
     db = Database()
     if args.import_excel:

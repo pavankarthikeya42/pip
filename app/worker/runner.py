@@ -1,6 +1,6 @@
 import asyncio, json
 from pathlib import Path
-from ..config import settings, EXTRACTED_DIR
+from ..config import settings, EXTRACTED_DIR, RESULTS_DIR
 from ..database.database import Database
 from ..browser.kari_browser import KARIClient
 from ..pdf.docling_extractor import extract_with_docling
@@ -9,6 +9,7 @@ from ..ui.metadata_extractor import normalize_metadata_keys
 from ..validation.metadata_validator import compare_metadata
 from ..validation.section_validator import validate_sections
 from ..validation.semantic_validator import SemanticValidator
+from ..worker.queue import stream_jobs_from_excel
 
 from ..validation.ui_pdf_validator import compare_ui_vs_pdf
 from ..validation.report_formatter import generate_reports
@@ -30,40 +31,55 @@ def cleanup_temp_files(pip: str, pdf_path: Path = None):
             print(f"[CLEANUP] Could not remove {file_path}: {ex}")
 
 class Runner:
-    def __init__(self, db=None): self.db=db or Database()
+    def __init__(self, db=None):
+        self.db = db
+
+    def _set_status(self, jid, status, error=None):
+        if self.db and jid is not None:
+            self.db.set_status(jid, status, error)
+
+    def _save_result(self, mid, overall, result_json):
+        if self.db and mid is not None:
+            self.db.save_result(mid, overall, result_json)
+
     async def run_one(self, job, client):
-        jid=job['id']; mid=job['medicine_id']; pip=job['pip_number'] or job['medicine_name']
-        self.db.set_status(jid,'SEARCHING')
+        jid = job.get('id') if isinstance(job, dict) else (job['id'] if 'id' in job.keys() else None)
+        mid = job.get('medicine_id') if isinstance(job, dict) else (job['medicine_id'] if 'medicine_id' in job.keys() else None)
+        pip = job.get('pip_number') or job.get('medicine_name', 'PIP')
+        self._set_status(jid, 'SEARCHING')
         try:
             await client.search(job['medicine_name'])
-            row=await client.select_pip(job['pip_number'],job['generic_name'],job['brand_name'])
-            self.db.set_status(jid,'PIP_FOUND')
+            row = await client.select_pip(job.get('pip_number', ''), job.get('generic_name', ''), job.get('brand_name', ''))
+            self._set_status(jid, 'PIP_FOUND')
             # 1. Open comparison view & extract UI comparison table data (includes 3x expand/collapse)
             ui = await client.compare(row)
             (EXTRACTED_DIR / f"{pip}_ui.json").write_text(json.dumps(ui, ensure_ascii=False, indent=2), encoding='utf-8')
-            self.db.set_status(jid, 'UI_EXTRACTED')
+            self._set_status(jid, 'UI_EXTRACTED')
 
             # 2. Download the PDF directly from the comparison table header button
             pdf_path = Path(EXTRACTED_DIR).parent / 'pdf' / f"{pip}.pdf"
             pdf_path = await client.retrieve_pdf_from_comparison(pip)
-            self.db.set_status(jid, 'PDF_RETRIEVED')
+            # 2. Download the PDF directly from the comparison table header button
+            pdf_path = Path(EXTRACTED_DIR).parent / 'pdf' / f"{pip}.pdf"
+            pdf_path = await client.retrieve_pdf_from_comparison(pip)
+            self._set_status(jid, 'PDF_RETRIEVED')
 
             # 3. Extract data from the downloaded PDF
             pdf = extract_with_docling(pdf_path)
             if not pdf.get('available'):
                 pdf = extract_with_pymupdf(pdf_path)
             (EXTRACTED_DIR / f"{pip}_pdf.json").write_text(json.dumps(pdf, ensure_ascii=False, indent=2), encoding='utf-8')
-            self.db.set_status(jid, 'PDF_EXTRACTED')
+            self._set_status(jid, 'PDF_EXTRACTED')
 
             # 4. Perform direct UI vs PDF Validation
             ui_vs_pdf = compare_ui_vs_pdf(ui, pdf)
 
             # 5. Excel Metadata Comparison
             excel_meta=normalize_metadata_keys({
-                'generic_name':job['generic_name'],'brand_name':job['brand_name'],'sponsor':job['sponsor'],
-                'pip_number':job['pip_number'],'decision_number':job['decision_number'],'decision_date':job['decision_date'],
-                'decision_type':job['decision_type'],'status':job['status'],'therapeutic_area':job['therapeutic_area'],
-                'condition_indication':job['condition_indication']})
+                'generic_name':job.get('generic_name',''),'brand_name':job.get('brand_name',''),'sponsor':job.get('sponsor',''),
+                'pip_number':job.get('pip_number',''),'decision_number':job.get('decision_number',''),'decision_date':job.get('decision_date',''),
+                'decision_type':job.get('decision_type',''),'status':job.get('status',''),'therapeutic_area':job.get('therapeutic_area',''),
+                'condition_indication':job.get('condition_indication','')})
             ui_meta = normalize_metadata_keys(ui.get('metadata', {}))
             pdf_meta = normalize_metadata_keys(pdf.get('metadata', {}))
             metadata = compare_metadata(excel_meta, ui_meta, pdf_meta)
@@ -80,7 +96,7 @@ class Runner:
             
             result = {
                 'medicine': job['medicine_name'],
-                'pip_number': job['pip_number'],
+                'pip_number': pip,
                 'overall_status': overall,
                 'ui_vs_pdf_validation': ui_vs_pdf,
                 'metadata_validation': metadata,
@@ -94,16 +110,56 @@ class Runner:
             }
             (EXTRACTED_DIR / f"{pip}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             generate_reports(result, pip)
-            self.db.save_result(mid, overall, json.dumps(result, ensure_ascii=False))
-            self.db.set_status(jid, 'COMPLETED')
+            self._save_result(mid, overall, json.dumps(result, ensure_ascii=False))
+            self._set_status(jid, 'COMPLETED')
             cleanup_temp_files(pip, pdf_path)
             return result
         except Exception as e:
-            self.db.set_status(jid,'ERROR',str(e)); raise
+            self._set_status(jid, 'ERROR', str(e)); raise
 
     MAX_RETRIES = 3
 
+    async def run_stream(self, excel_path: str | Path, limit: int | None = None, medicine: str | None = None, skip_existing: bool = True):
+        """Stream jobs directly from Excel without using a database."""
+        jobs = stream_jobs_from_excel(excel_path, limit=limit, medicine=medicine)
+        print(f"[STREAM RUNNER] Streamed {len(jobs)} drug record(s) from {Path(excel_path).name}", flush=True)
+
+        client = KARIClient()
+        processed_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        try:
+            await client.start()
+            for idx, job in enumerate(jobs, 1):
+                pip = job.get('pip_number') or job.get('medicine_name', 'PIP')
+                report_file = RESULTS_DIR / f"{pip}_report.md"
+
+                if skip_existing and report_file.exists():
+                    print(f"[STREAM RUNNER] [{idx}/{len(jobs)}] Skipping already completed drug: {job['medicine_name']} ({pip})", flush=True)
+                    skipped_count += 1
+                    continue
+
+                print(f"[STREAM RUNNER] [{idx}/{len(jobs)}] Processing drug: {job['medicine_name']} ({pip})", flush=True)
+                try:
+                    await self.run_one(job, client)
+                    processed_count += 1
+                except Exception as e:
+                    failed_count += 1
+                    print(f"[STREAM RUNNER] Error processing {job['medicine_name']}: {e}", flush=True)
+                    try:
+                        await client.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                        await client.page.wait_for_timeout(1000)
+                    except Exception:
+                        pass
+        finally:
+            await client.close()
+
+        print(f"\n[STREAM RUNNER SUMMARY] Completed: {processed_count} | Skipped: {skipped_count} | Failed: {failed_count} | Total: {len(jobs)}")
+
     async def run(self, owner=None):
+        if not self.db:
+            self.db = Database()
         # Create one browser session for the entire batch — login once.
         client = KARIClient()
         try:
@@ -133,3 +189,4 @@ class Runner:
                         pass
         finally:
             await client.close()
+
