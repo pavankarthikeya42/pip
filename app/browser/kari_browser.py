@@ -43,13 +43,31 @@ class KARIClient:
         await self.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
         await self.login_if_needed()
 
+    async def ensure_active_page(self):
+        """Ensure Playwright context and page are alive; re-launch if closed or crashed."""
+        try:
+            if not self.context or not self.page or self.page.is_closed():
+                print("[BROWSER] Page or context closed; re-launching browser session...")
+                await self.start()
+            else:
+                _ = self.page.url
+        except Exception:
+            print("[BROWSER] Session disconnected; re-launching browser context...")
+            await self.start()
+
     async def close(self):
-        if self.context:
-            await self.context.close()
-        elif self.browser:
-            await self.browser.close()
-        if self.pw:
-            await self.pw.stop()
+        try:
+            if self.context:
+                await self.context.close()
+            elif self.browser:
+                await self.browser.close()
+        except Exception:
+            pass
+        try:
+            if self.pw:
+                await self.pw.stop()
+        except Exception:
+            pass
 
     async def ensure_captcha(self):
         pass  # Rely on Playwright's auto-wait and wait_for_selector instead of hanging on generic CAPTCHA selectors
@@ -283,10 +301,10 @@ class KARIClient:
             if await nm.count() == 0:
                 continue
             label = (await nm.inner_text()).strip().lower()
-            is_pip = "pip" in label and "paediatric" not in label
+            is_pip = ("pip" in label) or ("paediatric" in label)
             is_sel = "sel" in (await item.get_attribute("class") or "")
             if is_pip and not is_sel:
-                print(f"[KARI] Selecting: {label}")
+                print(f"[KARI] Selecting: '{label}'")
                 await item.click()
                 await page.wait_for_timeout(400)
 
@@ -297,10 +315,10 @@ class KARIClient:
             if await nm.count() == 0:
                 continue
             label = (await nm.inner_text()).strip().lower()
-            is_pip = "pip" in label and "paediatric" not in label
+            is_pip = ("pip" in label) or ("paediatric" in label)
             is_sel = "sel" in (await item.get_attribute("class") or "")
             if not is_pip and is_sel:
-                print(f"[KARI] Deselecting: {label}")
+                print(f"[KARI] Deselecting: '{label}'")
                 await item.click()
                 await page.wait_for_timeout(400)
             else:

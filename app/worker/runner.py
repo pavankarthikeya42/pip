@@ -171,6 +171,7 @@ class Runner:
 
                 print(f"[STREAM RUNNER] [{idx}/{len(jobs)}] Processing drug: {job['medicine_name']} ({report_key})", flush=True)
                 try:
+                    await client.ensure_active_page()
                     await self.run_one(job, client)
                     processed_count += 1
                     batch_count += 1
@@ -178,6 +179,7 @@ class Runner:
                     failed_count += 1
                     print(f"[STREAM RUNNER] Error processing {job['medicine_name']}: {e}", flush=True)
                     try:
+                        await client.ensure_active_page()
                         await client.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
                         await client.page.wait_for_timeout(1000)
                     except Exception:
