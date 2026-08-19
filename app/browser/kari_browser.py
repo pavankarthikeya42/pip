@@ -20,6 +20,18 @@ class KARIClient:
         self.context = None
         self.page = None
 
+    def get_page(self):
+        if getattr(self, 'page', None) is None or self.page.is_closed():
+            if getattr(self, 'context', None) and self.context.pages:
+                open_pages = [p for p in self.context.pages if not p.is_closed()]
+                if open_pages:
+                    self.page = open_pages[-1]
+        return self.page
+
+    @property
+    def active_page(self):
+        return self.get_page()
+
     async def start(self):
         self.pw = await async_playwright().start()
         # Use a persistent Chrome profile so JWT/cookies survive across runs.
@@ -40,22 +52,29 @@ class KARIClient:
             raise RuntimeError("KARI_BASE_URL is not configured in .env")
 
         print(f"[BROWSER] Opening KARI: {settings.kari_base_url}")
-        await self.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+        await self.get_page().goto(settings.kari_base_url, wait_until="domcontentloaded")
         await self.login_if_needed()
 
     async def close(self):
-        if self.context:
-            await self.context.close()
-        elif self.browser:
-            await self.browser.close()
-        if self.pw:
-            await self.pw.stop()
+        try:
+            if getattr(self, 'context', None):
+                await self.context.close()
+            elif getattr(self, 'browser', None):
+                await self.browser.close()
+        except Exception:
+            pass
+        finally:
+            if getattr(self, 'pw', None):
+                try:
+                    await self.pw.stop()
+                except Exception:
+                    pass
 
     async def ensure_captcha(self):
         pass  # Rely on Playwright's auto-wait and wait_for_selector instead of hanging on generic CAPTCHA selectors
 
     async def login_if_needed(self):
-        page = self.page
+        page = self.get_page()
         print("[LOGIN] Checking KARI login page / session...")
         try:
             await page.wait_for_selector(f"{LOGIN_EMAIL}, {ASK_KARI_BUTTON}, {CHAT_INPUT}, button.cb-cta", timeout=20000)
@@ -108,15 +127,14 @@ class KARIClient:
         print("[LOGIN] KARI login / session check complete.")
 
     async def open_ask_kari(self):
-        page = self.page
+        page = self.get_page()
         # If the real editable textarea (workspace) is already present and visible, we are ready!
         real_input = page.locator("textarea.ta:not([readonly]), textarea:not([readonly])").first
         if await real_input.count() > 0 and await real_input.is_visible():
             return
 
         # If on the landing page with CTA button, click it to transition to workspace.
-        # Prefer button.cb-cta (the real "Ask KARI" CTA) over the readonly demo input.
-        cta_btn = page.locator("button.cb-cta, button.w-cta").first
+        cta_btn = page.locator("button.cb-cta, button.w-cta, button:has-text('Ask KARI')").first
         if await cta_btn.count() > 0 and await cta_btn.is_visible():
             print("[KARI] Clicking 'Ask KARI' CTA button to open chat workspace...")
             await cta_btn.click()
@@ -129,18 +147,16 @@ class KARIClient:
                 await demo.click()
                 await page.wait_for_timeout(2000)
 
-        # Wait for the REAL workspace textarea to appear (not the readonly demo input)
+        # Wait for the REAL workspace textarea to appear
         workspace_selector = "textarea.ta:not([readonly]), button.src-btn, .input-area textarea"
         try:
             await page.wait_for_selector(workspace_selector, timeout=15000)
             print("[KARI] Chat workspace loaded.")
         except PlaywrightTimeoutError:
-            # If we are still on the landing page, try navigating directly to a chat URL
             print("[KARI] Workspace textarea not found; navigating to KARI base URL...")
             await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
-            # Try CTA click again after fresh navigation
-            cta_btn = page.locator("button.cb-cta, button.w-cta").first
+            cta_btn = page.locator("button.cb-cta, button.w-cta, button:has-text('Ask KARI')").first
             if await cta_btn.count() > 0 and await cta_btn.is_visible():
                 await cta_btn.click()
                 await page.wait_for_timeout(2000)
@@ -150,10 +166,9 @@ class KARIClient:
             except PlaywrightTimeoutError:
                 print("[KARI] WARNING: Could not confirm workspace textarea after retry.")
 
-
     async def reset_workspace(self):
         """Start a fresh chat workspace to keep browser DOM clean during large batches."""
-        page = self.page
+        page = self.get_page()
         print("[KARI] Refreshing DOM / starting fresh chat workspace...")
         try:
             logo = page.locator("div.logo, img.logo-img, .logo").first
@@ -170,19 +185,12 @@ class KARIClient:
         await self.open_ask_kari()
 
     async def select_sources(self, source_names=None):
-        """Open the source dropdown, deselect everything not in wanted, select wanted.
-
-        The KARI input bar has a .src-btn chip that opens the .dd dropdown panel.
-        Inside the panel each source is a .so div; selected ones also carry .sel.
-        We click items to toggle them so that ONLY the wanted sources are active.
-        """
         wanted = [s.lower() for s in (source_names or settings.kari_sources or [])]
         if not wanted:
             return
 
-        page = self.page
+        page = self.get_page()
 
-        # ── 1. Open the dropdown if it isn't already open ──────────────────────
         dropdown = page.locator(".dd")
         is_open = await dropdown.evaluate("el => el.classList.contains('open')") if await dropdown.count() else False
         if not is_open:
@@ -194,20 +202,18 @@ class KARIClient:
                 print("[KARI] Source dropdown button not found; skipping source selection.")
                 return
 
-        # ── 2. Enumerate all .so rows in the dropdown ───────────────────────────
         so_items = page.locator(".dd-body .so")
         count = await so_items.count()
         print(f"[KARI] Dropdown source rows found: {count}")
 
         for i in range(count):
             item = so_items.nth(i)
-            # Read the label text from the .so-nm child
             nm = item.locator(".so-nm")
             if await nm.count() == 0:
                 continue
             label_text = (await nm.inner_text()).strip().lower()
             is_selected = "sel" in (await item.get_attribute("class") or "")
-            should_select = any(w in label_text for w in wanted)
+            should_select = any((w in label_text or (w == "pip" and "paediatric" in label_text)) for w in wanted)
 
             if should_select and not is_selected:
                 print(f"[KARI] Selecting source: {label_text}")
@@ -221,28 +227,17 @@ class KARIClient:
                 state = "already selected" if is_selected else "already deselected"
                 print(f"[KARI] Source '{label_text}': {state}")
 
-        # ── 3. Close the dropdown ───────────────────────────────────────────────
         close_btn = page.locator(".dd .dd-x").first
         if await close_btn.count():
             await close_btn.click()
             await page.wait_for_timeout(300)
         else:
-            # Fallback: press Escape to dismiss
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(300)
 
     async def switch_to_pip_source(self):
-        """Open the source chip dropdown and make PIP the only selected source.
+        page = self.get_page()
 
-        Strategy:
-          1. Click button.src-btn to open the .dd panel.
-          2. Wait for .dd-body to appear.
-          3. For every .so item: SELECT PIP first, then deselect all other sources.
-          4. Close the panel via .dd-x (or Escape fallback).
-        """
-        page = self.page
-
-        # ── 1. Open the dropdown ────────────────────────────────────────────────
         try:
             await page.wait_for_selector("button.src-btn, .input-area", timeout=15000)
         except Exception:
@@ -253,7 +248,6 @@ class KARIClient:
             print("[KARI] src-btn not found — skipping source switch.")
             return
 
-        # Close first if already open, then reopen cleanly
         dd = page.locator(".dd")
         if await dd.count() and "open" in (await dd.get_attribute("class") or ""):
             close_btn = page.locator(".dd .dd-x").first
@@ -264,57 +258,45 @@ class KARIClient:
         await src_btn.click()
         await page.wait_for_timeout(500)
 
-        # ── 2. Wait for the dropdown body to be visible ─────────────────────────
+        # Wait for the Advanced Data Sources API to finish loading items into .dd-body
+        print("[KARI] Waiting for data sources to load from API...")
+        pip_selector = ".dd-body .so:has-text('Paediatric Investigation Plans'), .dd-body .so:has-text('Paediatric')"
         try:
-            await page.wait_for_selector(".dd-body", timeout=4000)
+            await page.wait_for_selector(pip_selector, timeout=10000)
         except PlaywrightTimeoutError:
-            print("[KARI] Dropdown body did not appear; skipping source switch.")
-            return
+            print("[KARI] Timeout waiting for 'Paediatric Investigation Plans' in dropdown API response. Pausing 2s...")
+            await page.wait_for_timeout(2000)
 
-        # ── 3. Toggle sources: SELECT PIP first, then deselect the rest ─────────
-        so_items = page.locator(".dd-body .so")
-        count = await so_items.count()
-        print(f"[KARI] Source dropdown rows: {count}")
+        # Locate Paediatric Investigation Plans across all dropdown items (including Advanced Data Sources)
+        pip_item = page.locator(".dd-body .so").filter(has_text=re.compile(r"Paediatric Investigation Plans|Paediatric", re.I)).first
+        if await pip_item.count() > 0:
+            is_sel = "sel" in (await pip_item.get_attribute("class") or "")
+            if not is_sel:
+                print("[KARI] Selecting: Paediatric Investigation Plans")
+                await pip_item.click()
+                await page.wait_for_timeout(500)
+        else:
+            print("[KARI] 'Paediatric Investigation Plans' item not found in dropdown after wait.")
 
-        # Pass 1: select PIP
-        for i in range(count):
-            item = so_items.nth(i)
+        # Deselect any other active sources that are NOT Paediatric Investigation Plans
+        selected_items = page.locator(".dd-body .so.sel")
+        sel_count = await selected_items.count()
+        for i in range(sel_count):
+            item = selected_items.nth(i)
             nm = item.locator(".so-nm")
-            if await nm.count() == 0:
-                continue
-            label = (await nm.inner_text()).strip().lower()
-            is_pip = "pip" in label and "paediatric" not in label
-            is_sel = "sel" in (await item.get_attribute("class") or "")
-            if is_pip and not is_sel:
-                print(f"[KARI] Selecting: {label}")
+            txt = (await nm.inner_text()).strip() if await nm.count() else ""
+            if not re.search(r"Paediatric Investigation Plans|Paediatric", txt, re.I):
+                print(f"[KARI] Deselecting non-PIP source: {txt}")
                 await item.click()
-                await page.wait_for_timeout(400)
+                await page.wait_for_timeout(300)
 
-        # Pass 2: deselect everything that is not PIP
-        for i in range(count):
-            item = so_items.nth(i)
-            nm = item.locator(".so-nm")
-            if await nm.count() == 0:
-                continue
-            label = (await nm.inner_text()).strip().lower()
-            is_pip = "pip" in label and "paediatric" not in label
-            is_sel = "sel" in (await item.get_attribute("class") or "")
-            if not is_pip and is_sel:
-                print(f"[KARI] Deselecting: {label}")
-                await item.click()
-                await page.wait_for_timeout(400)
-            else:
-                print(f"[KARI] '{label}': {'sel=PIP(keep)' if is_pip else 'already deselected'}")
-
-        # ── 4. Close the dropdown ───────────────────────────────────────────────
         close_btn = page.locator(".dd .dd-x").first
         if await close_btn.count():
             await close_btn.click()
         else:
             await page.keyboard.press("Escape")
-        await page.wait_for_timeout(400)
+        await page.wait_for_timeout(500)
 
-        # Confirm the src-btn now shows PIP
         src_label = page.locator("button.src-btn .src-name")
         if await src_label.count():
             shown = (await src_label.inner_text()).strip()
@@ -322,7 +304,7 @@ class KARIClient:
 
     async def ask_meta_prompt(self, medicine_name, generic_name="", pip_number=""):
         """Open Ask KARI, switch to PIP source, then send the meta-prompt."""
-        page = self.page
+        page = self.get_page()
         await self.open_ask_kari()
 
         # Switch to PIP BEFORE typing/sending the prompt
@@ -361,7 +343,7 @@ class KARIClient:
         return prompt
 
     async def wait_for_answer(self):
-        page = self.page
+        page = self.get_page()
         await page.wait_for_timeout(int(settings.min_action_delay * 1000))
 
         try:

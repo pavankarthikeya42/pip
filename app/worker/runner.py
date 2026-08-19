@@ -178,8 +178,8 @@ class Runner:
                     failed_count += 1
                     print(f"[STREAM RUNNER] Error processing {job['medicine_name']}: {e}", flush=True)
                     try:
-                        await client.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
-                        await client.page.wait_for_timeout(1000)
+                        await client.active_page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                        await client.active_page.wait_for_timeout(1000)
                     except Exception:
                         pass
         finally:
@@ -213,8 +213,8 @@ class Runner:
                     print(f"Job {job['id']} failed: {e}", flush=True)
                     # Navigate back to home for the next job/retry
                     try:
-                        await client.page.goto(settings.kari_base_url, wait_until="domcontentloaded")
-                        await client.page.wait_for_timeout(1000)
+                        await client.active_page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                        await client.active_page.wait_for_timeout(1000)
                     except Exception:
                         pass
         finally:
