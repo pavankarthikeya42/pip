@@ -449,7 +449,7 @@ class KARIClient:
 
     async def retrieve_pdf(self, row, pip_number):
         page = self.get_page()
-        btn = row.locator(PDF_BUTTON).first
+        btn = (row.locator(PDF_BUTTON).first) if (row is not None and await row.count() > 0) else page.locator(PDF_BUTTON).first
         if await btn.count() == 0:
             btn = page.locator(PDF_BUTTON).first
         if await btn.count() == 0:
@@ -468,7 +468,15 @@ class KARIClient:
             async with page.expect_popup(timeout=12000) as popup_info:
                 await btn.click()
             popup = await popup_info.value
-            await popup.wait_for_load_state("domcontentloaded")
+            try:
+                await popup.wait_for_load_state("domcontentloaded")
+            except Exception:
+                pass
+            if popup.url.startswith("about:"):
+                try:
+                    await popup.wait_for_url(re.compile(r"^https?://"), timeout=8000)
+                except Exception:
+                    pass
             pdf_url = popup.url
             print(f"[KARI] PDF opened in new tab: {pdf_url}")
 
@@ -477,7 +485,7 @@ class KARIClient:
                 resp = await page.request.get(pdf_url)
                 if resp.status == 200:
                     body = await resp.body()
-                    if body:
+                    if body and len(body) > 100:
                         path.write_bytes(body)
                         print(f"[KARI] Saved PDF from URL ({len(body)} bytes) -> {path}")
                         await popup.close()
@@ -520,6 +528,11 @@ class KARIClient:
                 await popup.wait_for_load_state("domcontentloaded")
             except Exception:
                 pass
+            if popup.url.startswith("about:"):
+                try:
+                    await popup.wait_for_url(re.compile(r"^https?://"), timeout=8000)
+                except Exception:
+                    pass
             pdf_url = popup.url
             print(f"[KARI] Comparison PDF opened in tab: {pdf_url}")
 
