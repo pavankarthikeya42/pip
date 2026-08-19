@@ -93,8 +93,7 @@ class Runner:
                 'decision_type':job.get('decision_type',''),'status':job.get('status',''),'therapeutic_area':job.get('therapeutic_area',''),
                 'condition_indication':job.get('condition_indication','')})
             ui_meta = normalize_metadata_keys(ui.get('metadata', {}))
-            pdf_meta = normalize_metadata_keys(pdf.get('metadata', {}))
-            metadata = compare_metadata(excel_meta, ui_meta, pdf_meta)
+            metadata = compare_metadata(excel_meta, ui_meta)
 
             sections=validate_sections(pdf.get('sections',[]),ui.get('sections',[]))
             semantic=[]
