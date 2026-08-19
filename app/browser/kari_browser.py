@@ -507,9 +507,7 @@ class KARIClient:
         btn = page.locator(COMPARISON_PDF_BUTTON).first
         if await btn.count() == 0:
             print("[KARI] Comparison table PDF button not found; falling back to standard PDF button...")
-            btn = page.locator(PDF_BUTTON).first
-        if await btn.count() == 0:
-            raise RuntimeError(f"PIP PDF button not found on comparison table for PIP {pip_number}")
+            return await self.retrieve_pdf(None, pip_number)
 
         path = PDF_DIR / f"{pip_number or 'pip_document'}.pdf"
         print("[KARI] Clicking PDF button in comparison table header...")
@@ -518,15 +516,19 @@ class KARIClient:
             async with page.expect_popup(timeout=12000) as popup_info:
                 await btn.click()
             popup = await popup_info.value
-            await popup.wait_for_load_state("domcontentloaded")
+            try:
+                await popup.wait_for_load_state("domcontentloaded")
+            except Exception:
+                pass
             pdf_url = popup.url
             print(f"[KARI] Comparison PDF opened in tab: {pdf_url}")
 
+            # 1. Direct page request fetch
             try:
                 resp = await page.request.get(pdf_url)
                 if resp.status == 200:
                     body = await resp.body()
-                    if body:
+                    if body and len(body) > 100:
                         path.write_bytes(body)
                         print(f"[KARI] Saved comparison PDF from URL ({len(body)} bytes) -> {path}")
                         await popup.close()
@@ -534,18 +536,47 @@ class KARIClient:
             except Exception as e:
                 print(f"[KARI] Direct comparison PDF fetch note: {e}")
 
-            await popup.close()
-        except PlaywrightTimeoutError:
-            print("[KARI] No popup detected for comparison PDF; trying download fallback...")
-            async with page.expect_download(timeout=15000) as dl_info:
-                await btn.click()
-            dl = await dl_info.value
-            await dl.save_as(path)
-            print(f"[KARI] Downloaded comparison PDF -> {path}")
-            return path
+            # 2. Try fetching from popup request context
+            try:
+                resp = await popup.request.get(pdf_url)
+                if resp.status == 200:
+                    body = await resp.body()
+                    if body and len(body) > 100:
+                        path.write_bytes(body)
+                        print(f"[KARI] Saved comparison PDF from popup request ({len(body)} bytes) -> {path}")
+                        await popup.close()
+                        return path
+            except Exception as e:
+                print(f"[KARI] Popup PDF fetch note: {e}")
+
+            try:
+                await popup.close()
+            except Exception:
+                pass
+        except Exception as ex:
+            print(f"[KARI] Popup PDF fetch notice: {ex}; trying download event fallback...")
+            try:
+                async with page.expect_download(timeout=10000) as dl_info:
+                    await btn.click()
+                dl = await dl_info.value
+                await dl.save_as(path)
+                print(f"[KARI] Downloaded comparison PDF -> {path}")
+                return path
+            except Exception as ex2:
+                print(f"[KARI] Download event fallback notice: {ex2}")
 
         if path.exists() and path.stat().st_size > 0:
             return path
+
+        print("[KARI] Comparison PDF retrieval incomplete; attempting fallback to standard PIP PDF button...")
+        try:
+            return await self.retrieve_pdf(None, pip_number)
+        except Exception:
+            pass
+
+        if path.exists() and path.stat().st_size > 0:
+            return path
+
         raise RuntimeError(f"Failed to retrieve comparison PDF for PIP {pip_number}")
 
     async def compare(self, row=None):

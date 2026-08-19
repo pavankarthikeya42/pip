@@ -13,6 +13,7 @@ from ..worker.queue import stream_jobs_from_excel
 
 from ..validation.ui_pdf_validator import compare_ui_vs_pdf
 from ..validation.report_formatter import generate_reports
+from ..validation.csv_exporter import export_all_to_csv
 
 def get_report_key(job: dict) -> str:
     pip = job.get('pip_number') or job.get('medicine_name', 'PIP')
