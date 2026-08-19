@@ -4,7 +4,7 @@ from app.database.database import Database
 from app.worker.queue import detect_header_row, load_jobs_from_excel
 
 
-EXCEL = Path(__file__).parents[1].parent / "PIP_list_all_PIP_labels_20260812_163732.xlsx"
+EXCEL = Path(__file__).parents[1] / "data" / "input" / "PIP_list_all_PIP_labels_20260812_163732.xlsx"
 
 
 def test_pip_export_header_row():

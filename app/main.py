@@ -2,11 +2,12 @@ import argparse, asyncio
 from .database.database import Database
 from .worker.queue import load_jobs_from_excel
 from .worker.runner import Runner
-from .config import settings
+from .config import settings, RESULTS_DIR
+from .validation.csv_exporter import export_all_to_csv
 
 
 def main():
-    p = argparse.ArgumentParser(description="PDF ↔ KARI validation tool")
+    p = argparse.ArgumentParser(description="PDF <-> KARI validation tool")
     p.add_argument('--import-excel', help='Path to the PIP Excel export')
     p.add_argument('--stream-excel', help='Path to PIP Excel export for Direct DB-less Stream validation')
     p.add_argument('--owner', default=settings.owner, help='Owner/user name')
@@ -14,7 +15,13 @@ def main():
     p.add_argument('--limit', type=int, help='Import at most N medicine rows')
     p.add_argument('--no-skip', action='store_true', help='Do not skip already completed drugs in stream mode')
     p.add_argument('--run', action='store_true', help='Run the validation worker')
+    p.add_argument('--export-csv', nargs='?', const=str(RESULTS_DIR / "all_validation_results.csv"), help='Export all validation results to a single CSV file')
     args = p.parse_args()
+
+    if args.export_csv:
+        csv_path = export_all_to_csv(args.export_csv)
+        print(f"Exported validation results CSV to: {csv_path}")
+        return
 
     if args.stream_excel:
         asyncio.run(
@@ -54,3 +61,4 @@ def main():
 
 if __name__=='__main__':
     main()
+

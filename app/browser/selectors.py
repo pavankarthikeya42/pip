@@ -1,11 +1,11 @@
 # KARI selectors. Prefer stable semantic attributes/text over generated Angular classes.
-LOGIN_EMAIL = '#email'
-LOGIN_PASSWORD = '#password'
-LOGIN_SUBMIT = 'button.btn-submit[type="submit"]'
+LOGIN_EMAIL = '#email, input[name="email"], input[type="email"]'
+LOGIN_PASSWORD = '#password, input[name="password"], input[type="password"]'
+LOGIN_SUBMIT = 'button.btn-submit, button[type="submit"], button:has-text("Sign in")'
 RECAPTCHA = 'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha'
 
-DEMO_TRIGGER = 'input.cb-demo-inp, .cb-demo-inp, button.cb-cta, button.w-cta'
-ASK_KARI_BUTTON = 'button.cb-cta, button.w-cta, input.cb-demo-inp'
+DEMO_TRIGGER = 'button.cb-cta, button.w-cta, input.cb-demo-inp'
+ASK_KARI_BUTTON = 'button.cb-cta, button.w-cta, button:has-text("Ask KARI")'
 CHAT_INPUT = 'textarea.ta, textarea:not([readonly]), input[placeholder*="Ask" i], [contenteditable="true"]'
 CHAT_SEND = 'button.snd, button[aria-label*="send" i]'
 
@@ -23,4 +23,3 @@ COMPARISON_ROOT = '.cmp-table, .cmp-section-group, [data-section-key], .comparis
 SECTION_GROUP = 'tbody.cmp-section-group'
 SECTION_ROW = 'tr.cmp-sec-row'
 SECTION_CONTENT = 'tr.cmp-sec-content'
-

@@ -1,8 +1,9 @@
 import json
 from ..config import RESULTS_DIR
+from .csv_exporter import export_all_to_csv
 
 def generate_reports(result: dict, pip_number: str):
-    """Generate human-readable Markdown and formatted JSON reports in the results directory."""
+    """Generate human-readable Markdown, formatted JSON reports, and update consolidated CSV."""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     ui_pdf = result.get("ui_vs_pdf_validation", {})
@@ -95,8 +96,21 @@ def generate_reports(result: dict, pip_number: str):
     if not sec.get("extra_sections_in_ui"):
         md_lines.append("*No extra sections in UI.*")
 
+    md_lines.extend([
+        "\n### No Data Available Sections in UI",
+        "| Section Label | UI Content | Status |",
+        "| :--- | :--- | :--- |"
+    ])
+    for nds in sec.get("no_data_sections", []):
+        md_lines.append(f"| {nds['label']} | {nds['ui_text']} | `{nds['status']}` |")
+
+    if not sec.get("no_data_sections"):
+        md_lines.append("*No empty/placeholder sections found.*")
+
     md_content = "\n".join(md_lines)
 
     (RESULTS_DIR / f"{pip_number}_report.md").write_text(md_content, encoding="utf-8")
     (RESULTS_DIR / f"{pip_number}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[REPORTS] Saved validation report -> {RESULTS_DIR / f'{pip_number}_report.md'}")
+    export_all_to_csv()
+

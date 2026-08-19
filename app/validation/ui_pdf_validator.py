@@ -1,7 +1,9 @@
-from .normalizer import norm, norm_id
+from .normalizer import norm, norm_id, norm_date
 import re
 
 ID_FIELDS = {"pip_number", "decision_number"}
+DATE_FIELDS = {"decision_date", "first_published", "last_updated", "discontinue_date"}
+
 
 
 def _compare_section_content(pdf_txt: str, ui_txt: str) -> bool:
@@ -93,7 +95,14 @@ def compare_ui_vs_pdf(ui: dict, pdf: dict) -> dict:
             orig_pdf_k, pdf_val = pdf_meta_map[ck]
             
             is_id = any(id_f in ck for id_f in ID_FIELDS)
-            same = (norm_id(ui_val) == norm_id(pdf_val)) if is_id else (norm(ui_val) == norm(pdf_val))
+            is_date = "date" in ck or ck in DATE_FIELDS
+
+            if is_id:
+                same = norm_id(ui_val) == norm_id(pdf_val)
+            elif is_date:
+                same = norm_date(ui_val) == norm_date(pdf_val)
+            else:
+                same = norm(ui_val) == norm(pdf_val)
             
             if same:
                 matched_fields.append({
@@ -140,6 +149,7 @@ def compare_ui_vs_pdf(ui: dict, pdf: dict) -> dict:
     matched_sections = []
     missing_sections_in_ui = []
     extra_sections_in_ui = []
+    no_data_sections = []
     
     for pdf_nk, pdf_sec in pdf_sec_map.items():
         if pdf_nk in ui_sec_map:
@@ -162,10 +172,20 @@ def compare_ui_vs_pdf(ui: dict, pdf: dict) -> dict:
             
     for ui_nk, ui_sec in ui_sec_map.items():
         if ui_nk not in pdf_sec_map:
-            extra_sections_in_ui.append({
-                "label": ui_sec.get("label") or ui_sec.get("key"),
-                "ui_text": ui_sec.get("text", "")
-            })
+            raw_txt = (ui_sec.get("text") or "").strip()
+            norm_txt = norm(raw_txt)
+            
+            if not norm_txt or "no data available" in norm_txt or norm_txt in {"n/a", "none"}:
+                no_data_sections.append({
+                    "label": ui_sec.get("label") or ui_sec.get("key"),
+                    "ui_text": raw_txt,
+                    "status": "NO_DATA_AVAILABLE"
+                })
+            else:
+                extra_sections_in_ui.append({
+                    "label": ui_sec.get("label") or ui_sec.get("key"),
+                    "ui_text": raw_txt
+                })
             
     return {
         "metadata": {
@@ -177,6 +197,7 @@ def compare_ui_vs_pdf(ui: dict, pdf: dict) -> dict:
         "sections": {
             "matched_sections": matched_sections,
             "missing_sections_in_ui": missing_sections_in_ui,
-            "extra_sections_in_ui": extra_sections_in_ui
+            "extra_sections_in_ui": extra_sections_in_ui,
+            "no_data_sections": no_data_sections
         }
     }

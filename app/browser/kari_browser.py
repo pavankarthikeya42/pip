@@ -56,71 +56,118 @@ class KARIClient:
 
     async def login_if_needed(self):
         page = self.page
+        print("[LOGIN] Checking KARI login page / session...")
         try:
-            await page.wait_for_selector(f"{LOGIN_EMAIL}, {ASK_KARI_BUTTON}, {CHAT_INPUT}", timeout=15000)
+            await page.wait_for_selector(f"{LOGIN_EMAIL}, {ASK_KARI_BUTTON}, {CHAT_INPUT}, button.cb-cta", timeout=20000)
         except PlaywrightTimeoutError:
-            print("[LOGIN] Timeout waiting for expected elements. Page body:")
-            print((await page.evaluate("document.body.innerText"))[:2000])
+            print("[LOGIN] Timeout waiting for expected elements.")
             
         email = page.locator(LOGIN_EMAIL).first
         password = page.locator(LOGIN_PASSWORD).first
 
-        if await email.count() == 0 or await password.count() == 0:
+        if await email.count() > 0 and await email.is_visible():
+            if not settings.kari_username or not settings.kari_password:
+                raise RuntimeError(
+                    "KARI_USERNAME and KARI_PASSWORD must be configured in .env "
+                    "for automatic login."
+                )
+
+            print(f"[LOGIN] Entering KARI credentials for {settings.kari_username}...")
+            await email.fill(settings.kari_username)
+            await password.fill(settings.kari_password)
+
+            keep_signed_in = page.locator("label:has-text('Keep me signed in'), input[type='checkbox']").first
+            if await keep_signed_in.count():
+                try:
+                    chk = page.locator("input[type='checkbox']").first
+                    if await chk.count() and not await chk.is_checked():
+                        await keep_signed_in.click()
+                except Exception:
+                    pass
+
+            submit_btn = page.locator(LOGIN_SUBMIT).first
+            if await submit_btn.count():
+                await submit_btn.click()
+            else:
+                await password.press("Enter")
+
+            print("[LOGIN] Sign-in submitted; waiting for KARI workspace.")
+            await page.wait_for_timeout(3000)
+
+            # Check if reCAPTCHA is present
+            if await captcha_present(page) or "reCAPTCHA" in (await page.evaluate("document.body.innerText")):
+                print("\n" + "="*70)
+                print("[LOGIN] reCAPTCHA detected! Please complete the reCAPTCHA verification in the Chrome browser window.")
+                print("="*70 + "\n")
+                await wait_for_human_captcha(page)
+
+            await page.wait_for_load_state("domcontentloaded")
+        else:
             print("[LOGIN] Login form not visible; assuming existing session.")
-            await self.ensure_captcha()
-            return
 
-        if not settings.kari_username or not settings.kari_password:
-            raise RuntimeError(
-                "KARI_USERNAME and KARI_PASSWORD must be configured in .env "
-                "for automatic login."
-            )
-
-        print("[LOGIN] Entering KARI username/password...")
-        await email.fill(settings.kari_username)
-        await password.fill(settings.kari_password)
-
-        # Check "Keep me signed in" if present to preserve session
-        keep_signed_in = page.locator("label:has-text('Keep me signed in'), input[type='checkbox']").first
-        if await keep_signed_in.count():
-            try:
-                chk = page.locator("input[type='checkbox']").first
-                if await chk.count() and not await chk.is_checked():
-                    await keep_signed_in.click()
-            except Exception:
-                pass
-
-        await page.locator(LOGIN_SUBMIT).click()
-        print("[LOGIN] Sign-in submitted; waiting for KARI workspace. If a CAPTCHA appears, please solve it manually now!")
-
-        await page.wait_for_load_state("domcontentloaded")
-        await self.ensure_captcha()
-        try:
-            await page.wait_for_selector(f"{ASK_KARI_BUTTON}, {CHAT_INPUT}", timeout=90000)
-        except PlaywrightTimeoutError:
-            # A login error is more useful than silently continuing.
-            body = (await page.locator("body").inner_text())[:2000]
-            raise RuntimeError(f"KARI workspace did not open after login. Visible page text:\n{body}")
-        print("[LOGIN] KARI workspace ready.")
+        print("[LOGIN] KARI login / session check complete.")
 
     async def open_ask_kari(self):
         page = self.page
-        # If the real editable textarea is already present and visible, we are ready!
+        # If the real editable textarea (workspace) is already present and visible, we are ready!
         real_input = page.locator("textarea.ta:not([readonly]), textarea:not([readonly])").first
         if await real_input.count() > 0 and await real_input.is_visible():
             return
 
-        # If on the landing page with demo input / CTA button, click it to transition to workspace
-        demo = page.locator(DEMO_TRIGGER).first
-        if await demo.count() > 0 and await demo.is_visible():
-            print("[KARI] Clicking landing demo input / CTA to open chat workspace...")
-            await demo.click()
-            await page.wait_for_timeout(500)
+        # If on the landing page with CTA button, click it to transition to workspace.
+        # Prefer button.cb-cta (the real "Ask KARI" CTA) over the readonly demo input.
+        cta_btn = page.locator("button.cb-cta, button.w-cta").first
+        if await cta_btn.count() > 0 and await cta_btn.is_visible():
+            print("[KARI] Clicking 'Ask KARI' CTA button to open chat workspace...")
+            await cta_btn.click()
+            await page.wait_for_timeout(2000)
+        else:
+            # Fallback: try clicking the demo input area
+            demo = page.locator(DEMO_TRIGGER).first
+            if await demo.count() > 0 and await demo.is_visible():
+                print("[KARI] Clicking landing demo trigger to open chat workspace...")
+                await demo.click()
+                await page.wait_for_timeout(2000)
 
+        # Wait for the REAL workspace textarea to appear (not the readonly demo input)
+        workspace_selector = "textarea.ta:not([readonly]), button.src-btn, .input-area textarea"
         try:
-            await page.wait_for_selector(CHAT_INPUT, timeout=15000)
+            await page.wait_for_selector(workspace_selector, timeout=15000)
+            print("[KARI] Chat workspace loaded.")
         except PlaywrightTimeoutError:
-            pass
+            # If we are still on the landing page, try navigating directly to a chat URL
+            print("[KARI] Workspace textarea not found; navigating to KARI base URL...")
+            await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000)
+            # Try CTA click again after fresh navigation
+            cta_btn = page.locator("button.cb-cta, button.w-cta").first
+            if await cta_btn.count() > 0 and await cta_btn.is_visible():
+                await cta_btn.click()
+                await page.wait_for_timeout(2000)
+            try:
+                await page.wait_for_selector(workspace_selector, timeout=15000)
+                print("[KARI] Chat workspace loaded after retry.")
+            except PlaywrightTimeoutError:
+                print("[KARI] WARNING: Could not confirm workspace textarea after retry.")
+
+
+    async def reset_workspace(self):
+        """Start a fresh chat workspace to keep browser DOM clean during large batches."""
+        page = self.page
+        print("[KARI] Refreshing DOM / starting fresh chat workspace...")
+        try:
+            logo = page.locator("div.logo, img.logo-img, .logo").first
+            if await logo.count() and await logo.is_visible():
+                await logo.click()
+                await page.wait_for_timeout(600)
+            else:
+                await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(1000)
+        except Exception:
+            await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(1000)
+
+        await self.open_ask_kari()
 
     async def select_sources(self, source_names=None):
         """Open the source dropdown, deselect everything not in wanted, select wanted.
@@ -334,7 +381,7 @@ class KARIClient:
     async def search(self, medicine_name, generic_name="", pip_number=""):
         return await self.ask_meta_prompt(medicine_name, generic_name, pip_number)
 
-    async def select_pip(self, pip_number="", generic_name="", brand_name=""):
+    async def select_pip(self, pip_number="", generic_name="", brand_name="", decision_date="", status=""):
         page = self.page
         try:
             await page.wait_for_selector(RESULT_ROW, timeout=settings.max_wait_seconds * 1000)
@@ -343,32 +390,61 @@ class KARIClient:
 
         rows = page.locator(RESULT_ROW)
         count = await rows.count()
+        print(f"[KARI] Found {count} result row(s) in PIP table.")
+        
         matches = []
         for i in range(count):
             row = rows.nth(i)
             text = (await row.inner_text()).casefold()
-            if pip_number and pip_number.casefold() not in text:
-                continue
-            if generic_name and generic_name.casefold() not in text and not pip_number:
-                continue
-            if brand_name and brand_name.casefold() not in text and not pip_number and not generic_name:
-                continue
-            matches.append(row)
+            
+            pip_ok = not pip_number or (pip_number.casefold() in text)
+            date_ok = not decision_date or (decision_date.strip().casefold() in text)
+            status_ok = not status or (status.strip().casefold() in text)
+
+            if pip_ok and date_ok and status_ok:
+                matches.append(row)
+
+        # Fallback 1: match on pip_number + status
+        if not matches and pip_number:
+            for i in range(count):
+                row = rows.nth(i)
+                text = (await row.inner_text()).casefold()
+                if pip_number.casefold() in text and (not status or status.strip().casefold() in text):
+                    matches.append(row)
+
+        # Fallback 2: match on pip_number alone
+        if not matches and pip_number:
+            for i in range(count):
+                row = rows.nth(i)
+                text = (await row.inner_text()).casefold()
+                if pip_number.casefold() in text:
+                    matches.append(row)
 
         target_row = matches[0] if matches else (rows.first if count > 0 else page.locator("body"))
 
-        # Select the checkbox in the target row to enable the Compare button
-        if target_row and await target_row.count():
-            chk = target_row.locator("label.dl-checkbox-label, input[type='checkbox']").first
-            if await chk.count():
+        # Ensure ONLY the single target row's checkbox is selected (uncheck all other rows)
+        target_handle = await target_row.element_handle() if (target_row and await target_row.count()) else None
+
+        for i in range(count):
+            r = rows.nth(i)
+            chk_input = r.locator("input[type='checkbox']").first
+            chk_label = r.locator("label.dl-checkbox-label, input[type='checkbox']").first
+            if await chk_input.count():
                 try:
-                    is_checked = await target_row.locator("input[type='checkbox']").first.is_checked()
-                    if not is_checked:
-                        await chk.click()
-                        await page.wait_for_timeout(400)
-                        print("[KARI] Row checkbox selected for comparison.")
+                    is_checked = await chk_input.is_checked()
+                    r_handle = await r.element_handle()
+                    is_target = (target_handle is not None and r_handle == target_handle)
+
+                    if is_checked and not is_target:
+                        print(f"[KARI] Deselecting non-target row {i+1} checkbox.")
+                        await chk_label.click()
+                        await page.wait_for_timeout(200)
+                    elif not is_checked and is_target:
+                        print(f"[KARI] Selecting single target row {i+1} checkbox for comparison.")
+                        await chk_label.click()
+                        await page.wait_for_timeout(200)
                 except Exception as ex:
-                    print(f"[KARI] Row checkbox click notice: {ex}")
+                    print(f"[KARI] Checkbox toggle notice for row {i+1}: {ex}")
 
         return target_row
 
