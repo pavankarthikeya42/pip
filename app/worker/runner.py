@@ -28,7 +28,6 @@ def cleanup_temp_files(pip: str, pdf_path: Path = None):
         pdf_path,
         EXTRACTED_DIR / f"{pip}_pdf.json",
         EXTRACTED_DIR / f"{pip}_ui.json",
-        EXTRACTED_DIR / f"{pip}_validation.json",
     ]
     for file_path in to_delete:
         try:
@@ -128,7 +127,7 @@ class Runner:
                 'missing_sections_in_ui': [x.get('label') or x.get('key') for x in missing],
                 'semantic_checks': semantic
             }
-            (EXTRACTED_DIR / f"{report_key}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+            (RESULTS_DIR / f"{report_key}_validation.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
             generate_reports(result, report_key)
             self._save_result(mid, overall, json.dumps(result, ensure_ascii=False))
             self._set_status(jid, 'COMPLETED')
