@@ -155,10 +155,26 @@ class Runner:
             for idx, job in enumerate(jobs, 1):
                 report_key = get_report_key(job)
                 report_file = RESULTS_DIR / f"{report_key}_report.md"
+                val_file = RESULTS_DIR / f"{report_key}_validation.json"
 
-                if skip_existing and report_file.exists():
+                if skip_existing and (report_file.exists() or val_file.exists()):
                     print(f"[STREAM RUNNER] [{idx}/{len(jobs)}] Skipping already completed drug: {job['medicine_name']} ({report_key})", flush=True)
                     skipped_count += 1
+                    if not val_file.exists():
+                        skipped_result = {
+                            'medicine': job['medicine_name'],
+                            'generic_name': job.get('generic_name', ''),
+                            'brand_name': job.get('brand_name') or job.get('medicine_name', ''),
+                            'sponsor': job.get('sponsor', ''),
+                            'pip_number': job.get('pip_number') or job.get('medicine_name', 'PIP'),
+                            'decision_number': job.get('decision_number', ''),
+                            'decision_date': job.get('decision_date', ''),
+                            'decision_type': job.get('decision_type', ''),
+                            'status': job.get('status', ''),
+                            'condition_indication': job.get('condition_indication', '') or job.get('therapeutic_area', ''),
+                            'overall_status': 'SKIPPED',
+                        }
+                        val_file.write_text(json.dumps(skipped_result, ensure_ascii=False, indent=2), encoding='utf-8')
                     continue
 
                 if batch_count > 0 and batch_count % self.RESET_INTERVAL == 0:
@@ -176,6 +192,22 @@ class Runner:
                 except Exception as e:
                     failed_count += 1
                     print(f"[STREAM RUNNER] Error processing {job['medicine_name']}: {e}", flush=True)
+                    if not val_file.exists():
+                        failed_result = {
+                            'medicine': job['medicine_name'],
+                            'generic_name': job.get('generic_name', ''),
+                            'brand_name': job.get('brand_name') or job.get('medicine_name', ''),
+                            'sponsor': job.get('sponsor', ''),
+                            'pip_number': job.get('pip_number') or job.get('medicine_name', 'PIP'),
+                            'decision_number': job.get('decision_number', ''),
+                            'decision_date': job.get('decision_date', ''),
+                            'decision_type': job.get('decision_type', ''),
+                            'status': job.get('status', ''),
+                            'condition_indication': job.get('condition_indication', '') or job.get('therapeutic_area', ''),
+                            'overall_status': 'FAIL',
+                            'error_message': str(e),
+                        }
+                        val_file.write_text(json.dumps(failed_result, ensure_ascii=False, indent=2), encoding='utf-8')
                     try:
                         await client.active_page.goto(settings.kari_base_url, wait_until="domcontentloaded")
                         await client.active_page.wait_for_timeout(1000)
@@ -183,6 +215,7 @@ class Runner:
                         pass
         finally:
             await client.close()
+            export_all_to_csv()
 
         print(f"\n[STREAM RUNNER SUMMARY] Completed: {processed_count} | Skipped: {skipped_count} | Failed: {failed_count} | Total: {len(jobs)}")
 
