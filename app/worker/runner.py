@@ -209,8 +209,9 @@ class Runner:
                         }
                         val_file.write_text(json.dumps(failed_result, ensure_ascii=False, indent=2), encoding='utf-8')
                     try:
-                        await client.active_page.goto(settings.kari_base_url, wait_until="domcontentloaded")
-                        await client.active_page.wait_for_timeout(1000)
+                        page = await client.ensure_active_page()
+                        await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                        await page.wait_for_timeout(1000)
                     except Exception:
                         pass
         finally:
@@ -245,10 +246,12 @@ class Runner:
                     print(f"Job {job['id']} failed: {e}", flush=True)
                     # Navigate back to home for the next job/retry
                     try:
-                        await client.active_page.goto(settings.kari_base_url, wait_until="domcontentloaded")
-                        await client.active_page.wait_for_timeout(1000)
+                        page = await client.ensure_active_page()
+                        await page.goto(settings.kari_base_url, wait_until="domcontentloaded")
+                        await page.wait_for_timeout(1000)
                     except Exception:
                         pass
         finally:
             await client.close()
+            export_all_to_csv()
 

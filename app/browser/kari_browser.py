@@ -32,6 +32,23 @@ class KARIClient:
     def active_page(self):
         return self.get_page()
 
+    async def ensure_active_page(self):
+        """Ensure Playwright context and page are alive; re-launch or create page if needed."""
+        try:
+            if not getattr(self, 'context', None) or not getattr(self, 'pw', None):
+                await self.start()
+                return self.get_page()
+            open_pages = [p for p in self.context.pages if not p.is_closed()]
+            if not open_pages:
+                self.page = await self.context.new_page()
+                self.page.set_default_timeout(settings.max_wait_seconds * 1000)
+            else:
+                self.page = open_pages[-1]
+            return self.page
+        except Exception:
+            await self.start()
+            return self.get_page()
+
     async def start(self):
         self.pw = await async_playwright().start()
         # Use a persistent Chrome profile so JWT/cookies survive across runs.
@@ -364,7 +381,7 @@ class KARIClient:
         return await self.ask_meta_prompt(medicine_name, generic_name, pip_number)
 
     async def select_pip(self, pip_number="", generic_name="", brand_name="", decision_date="", status=""):
-        page = self.page
+        page = self.get_page()
         try:
             await page.wait_for_selector(RESULT_ROW, timeout=settings.max_wait_seconds * 1000)
         except PlaywrightTimeoutError:
@@ -431,11 +448,12 @@ class KARIClient:
         return target_row
 
     async def retrieve_pdf(self, row, pip_number):
+        page = self.get_page()
         btn = row.locator(PDF_BUTTON).first
         if await btn.count() == 0:
-            btn = self.page.locator(PDF_BUTTON).first
+            btn = page.locator(PDF_BUTTON).first
         if await btn.count() == 0:
-            snippet = await self.page.evaluate(
+            snippet = await page.evaluate(
                 "() => document.querySelector('.conv,.chat-wrap,body').innerHTML.slice(0,6000)"
             )
             print("[DEBUG] Page HTML snippet:\n", snippet)
@@ -447,7 +465,7 @@ class KARIClient:
         print("[KARI] Clicking PIP PDF button...")
         try:
             # First attempt: expect popup (new tab)
-            async with self.page.expect_popup(timeout=12000) as popup_info:
+            async with page.expect_popup(timeout=12000) as popup_info:
                 await btn.click()
             popup = await popup_info.value
             await popup.wait_for_load_state("domcontentloaded")
@@ -456,7 +474,7 @@ class KARIClient:
 
             # Fetch the PDF content from the URL
             try:
-                resp = await self.page.request.get(pdf_url)
+                resp = await page.request.get(pdf_url)
                 if resp.status == 200:
                     body = await resp.body()
                     if body:
@@ -472,7 +490,7 @@ class KARIClient:
         except PlaywrightTimeoutError:
             print("[KARI] No popup detected; trying expect_download fallback...")
             # Fallback: expect download event
-            async with self.page.expect_download(timeout=15000) as dl_info:
+            async with page.expect_download(timeout=15000) as dl_info:
                 await btn.click()
             dl = await dl_info.value
             await dl.save_as(path)
@@ -485,7 +503,7 @@ class KARIClient:
 
     async def retrieve_pdf_from_comparison(self, pip_number):
         """Download the PIP PDF directly from the comparison table header button (.cmp-th-pdf)."""
-        page = self.page
+        page = self.get_page()
         btn = page.locator(COMPARISON_PDF_BUTTON).first
         if await btn.count() == 0:
             print("[KARI] Comparison table PDF button not found; falling back to standard PDF button...")
@@ -531,7 +549,7 @@ class KARIClient:
         raise RuntimeError(f"Failed to retrieve comparison PDF for PIP {pip_number}")
 
     async def compare(self, row=None):
-        page = self.page
+        page = self.get_page()
 
         # Ensure the row checkbox is checked so Compare button is active
         if row is not None and await row.count():
